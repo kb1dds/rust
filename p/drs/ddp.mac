@@ -1,16 +1,24 @@
-;variable size
-prt$c=0		; RUST/XM ports
-shp$c=0		; SHAREplus signature support
-dzp$c=1		; DZV port support
-dzv$c=1		; DZV support
-;tk$c=1		; stack boot receive packet
-prb$c=1		; probe device
-tim$c=1		; timeout
-rep$c=0		; driver debug reports
-wai$c=1		; wait mode
-odt$c=0		; terminal boot driver (obselete)
+;???;	DRS:DDP - Ports/DZV/Probe/Timeout temporarily disabled
+;???;	DRS:DDP - where does ddNUL. come from?
+;???;	DRS:DDP - DDP doesn't fork or PR7
+;???;	DRS:DDP - No driver abort routine
+;???;	DRS:DDP - Doesn't check overrun error
 .title	ddp - DD: driver
 .include "lib:rust.mac"
+;variable size
+die$c=0		; auto-apoptosis
+fst$c=0		; fast mode
+pr7$c=0;1	; use .MTPS #340
+prt$c=0		; RUST/XM ports
+shp$c=0		; SHAREplus signature support
+dzp$c=0;1	; DZV port support
+dzv$c=0;1	; DZV support
+prb$c=0;1	; probe device
+;tk$c=1		; stack boot receive packet
+tim$c=0		; timeout
+log$c=0;1	; log operations
+wai$c=1		; set wait option
+odt$c=0		; terminal boot driver (obsolete)
 
 ;	RUST DD: driver
 ;
@@ -19,7 +27,7 @@ odt$c=0		; terminal boot driver (obselete)
 ;	%build
 ;	goto 'p1'
 ;	macro	drs:ddp/object:drb:ddv
-;	macro	drs:drmmgt+drs:ddp/object:drb:ddp
+;	macro	drs:mmg$t+drs:ddp/object:drb:ddp
 ;	link:
 ;	link	drb:ddv/execute:drb:ddv.sys/nobitmap/bound:1000/map:drb:ddv
 ;	xxboot
@@ -36,8 +44,8 @@ odt$c=0		; terminal boot driver (obselete)
 ;	set drb:ddv retry=8
 ;	set drb:ddv timer=30
 ;	set drb:ddv nowait
-;	set drb:ddv port=0
-;	set drb:ddv speed=9600
+;	!set drb:ddv port=0
+;	!set drb:ddv speed=9600
 ;	exit
 ;	@drs:check compare DDV
 ;	
@@ -47,6 +55,7 @@ odt$c=0		; terminal boot driver (obselete)
 ;	set drb:ddp csr=176500
 ;	set drb:ddp vector=300
 ;	set drb:ddp retry=8
+;	set drb:ddv nowait
 ;	exit
 ;	@drs:check compare DDP
 ;	end:
@@ -57,9 +66,9 @@ $imgdef	DD 1 0
 $imginf fun=drv cre=hammo aut=ijh use=<RUST TU58 DECtape II driver DD:>
 $imgham	yrs=<2004> oth=<>
 ;	%date	
-$imgdat <29-Oct-2008 13:28:24.27>
+$imgdat <08-Jan-2023 19:43:04>   
 ;	%edit
-$imgedt <86   >
+$imgedt <106  >
 .endm
 
 $brdef		;RT-11 bootstrap
@@ -127,7 +136,6 @@ upini$
 
 ; STAND-ALONE OPTION
 ;
-;
 ;		A TU58 will run a stand-alone program if a TU58 tape
 ;		begins with octal 206 (a NOP) followed by the rad50
 ;		name of the image. An RT-11 TU58 formatted tape is
@@ -167,6 +175,7 @@ upini$
 ;	RUST driver transfers and retries block-wise.
 ;
 ; PSUEDO-FORK STATE
+;
 ;	The DEC driver uses a psuedo-fork state for some operations.
 ;	The reasoning is simple -- they could lose TU58 data if
 ;	some other driver (such as DL:) hogs the fork queue for
@@ -181,6 +190,7 @@ upini$
 ;	priority four (and perhaps with a fork routine).
 ;
 ; "STANDARD INTERCHANGE MEDIA"
+;
 ;	The TU58 (DECtape II) was vaunted as the new standard 
 ;	interchange medium for DEC machines. It had a very short
 ;	shelf life. Drivers were not supplied with RT-11 V5.5.
@@ -195,6 +205,111 @@ upini$
 ;	o  Packet count is the data byte count
 ;	o  Control packets have five words, i.e. ten bytes of data
 ;	o  Packet checksum includes packet header and data
+;
+; DEVICE SIZE
+;
+;	DDP does not check block numbers for out-of-range errors.
+;	This allows DDP to automatically handle oversize emulations.
+;
+;	DDP/DD.EXE support the standard get-device-size special function.
+;	The function fails for hardware TU58s and TU58FS.
+;
+;	TU58FS handles oversize by patching DD[X].SYS location @#54 when
+;	it creates RT-11 system images on-the-fly. That doesn't work for 
+;	RT-11 system devices that aren't created on-the-fly. However, this
+;	is not a problem for DDP which ignores block out-of-range anyway.
+.sbttl	interface log
+
+	.macro	ddpr7$
+	.if ne pr7$c
+	.mtps	#340
+	.endc
+	.endm
+
+	.if ne log$c
+	ifREA. = -1
+	ifASC. = 1	; ascii
+	ifIPT. = 2	; input byte
+	ifOPT. = 3	; output byte
+
+	ifLEN. = 4*1024.
+	.endc
+
+	.macro	ifasc$	val lab
+	.if ne log$c
+	psh	(pc)+
+	.ascii	/'val'/
+	.even
+	call	if$asc
+	.endc
+	.iif nb <lab>, br lab
+	.endm
+
+	.macro	ifipt$	val
+	.if ne log$c
+	movb	val,-(sp)
+	call	if$ipt
+	.endc
+	.endm
+
+	.macro	ifopt$	val
+	.if ne log$c
+	movb	val,-(sp)
+	call	if$opt
+	.endc
+	.endm
+
+	.macro	ifcod$
+	.if ne log$c
+i$fbas:	.word	0
+i$fnxt:	.word	0
+i$fcnt:	.word	0
+i$fbuf:	.blkb	ifLEN.
+
+	.enabl	lsb
+if$asc:	psh	#ifASC.
+	br	10$
+if$ipt:	psh	#ifIPT.
+	br	10$
+if$opt:	psh	#ifOPT.
+10$:	call	if$sto
+	psh	2(sp)
+	call	if$sto
+20$:	pop	(sp)
+	return
+	.dsabl	lsb
+
+;	stack	r0,cbt,pc,val
+	sp.val = 6
+if$sto:	rol	-(sp)
+	psh	r0
+	mov	i$fnxt,r0
+	bne	10$
+	mova	i$fbuf,r0
+	mov	r0,i$fbas
+	mov	r0,i$fnxt
+10$:	cmp	i$fcnt,#ifLEN.-2
+	bhis	20$
+	movb	sp.val(sp),(r0)
+	inc	i$fnxt
+	inc	i$fcnt
+20$:	pop	r0
+	ror	(sp)+
+	pop	(sp)
+	return
+
+if$rep:	mova	i$fcnt,r2		; buffer
+	psh	#ifLEN.-2/2
+10$:	mov	(r2)+,r0		;
+	call	xx$put			; send it back
+	dec	(sp)			;
+	bne	10$			;
+20$:	tst	(sp)+
+	mov	i$fbas,i$fnxt		; reset the buffer
+	clr	i$fcnt			;
+	return
+	.endc
+	.endm
 .sbttl	device
 
 map	ddcsr.,,176500		; csr
@@ -222,7 +337,7 @@ map	ddbrk$,,1		; break
 map	ddenb$,,100		; interrupt enable
 map	ddrdy$,,200		; function done
 
-;	packet types
+;	Packet types
 
 set	ddDAT. 	1	; <->	; data packet
 set	ddCTL. 	2	; <->	; control packet
@@ -231,16 +346,18 @@ set	ddBOO. 	10	;  ->	; boot command
 set	ddCON. 	20	; <-	; continue command
 set	ddNUL.	30.	; <-	; null data packet
 
-map	dp.typ,byte,0		; packet type
-map	dp.cnt,byte		; byte count
-map	dp.cod,byte		; operation code
-map	dp.sta,byte		; modifier or status (<0 => error)
-map	dp.uni			; device unit (and switches)
-map	dp.seq		; 0	; sequence number
-map	dp.bct			; byte count
-map	dp.blk			; block number
-map	dp.chk			; checksum
-map	dp.bbs			;
+;	Packet
+
+map	dp.typ,byte,0	;00	; packet type
+map	dp.cnt,byte	;01 	; byte count
+map	dp.cod,byte	;02 	; operation code
+map	dp.sta,byte	;03 	; modifier or status (<0 => error)
+map	dp.uni		;04 	; device unit (and switches)
+map	dp.seq		;06 	; sequence number
+map	dp.bct		;10 08	; byte count
+map	dp.blk		;12 10	; block number
+map	dp.chk		;14 12	; checksum
+map	dp.bbs		;16 14 	;
 
 ;	Opcodes
 
@@ -308,15 +425,14 @@ map	ip.bbs		;
 	.drset	PORT,3,st$prt,NUM	; SET DD: PORT=3
 	.drset	SPEED,7400,st$prt,NUM	; SET DD: SPEED=9600...
 
-;	Port information has to be written to written to
-;	the driver, the boot, the load/fetch code and
-;	the installation probe code (although load/fetch
-;	pick it up from the driver).
+;	Port information has to be written to the driver, the boot
+;	the load/fetch code and the install probe code (although 
+;	load/fetch picks it up from the driver).
 
 st$prt:	$drcal	lo$dzp res=NO	; do load port routine
 	bcs	st$fai		; failed
 	$drwri			; write back load overlay
-	$drcal	in$dzp RES=NO	; do install port routine
+	$drcal	in$dzp res=NO	; do install port routine
 	$drwri			; 
 	$drget	b$odzi		; read boot section
 	mov	r0,b$odzi-$	; change port number
@@ -338,7 +454,7 @@ x$xrty:	.word	xxrty.			; retry count
 x$xcsr:	.word	xxcsr.			; csr address
 	.drvtb	x$xvtb,xxvec.,xxint	; vector definition
 	.drvtb	,xxvec.+ve.bbs,xxint	;
-x$xabt:	.word	1			;
+x$xini:	.word	0			; is initialized flag
 x$xtmo:	.word	30.*64.			; 30 second timeout
 .if ne dzv$c
 x$xdzi:	.word	ddDZI$			; 0 => not a DZV
@@ -357,12 +473,11 @@ x$xwai:	.word	0			; wait mode
 .if ne odt$c
 x$xodt:	.word	0			; terminal boot support
 .endc
-
-drrep$
-.sbttl	start i/o
+;???;	DRS:DDP	- Unit out-of-range check commented out
+.sbttl	start i/o
 
 xx$sta:
-drrep$ <st >
+ifasc$ <S>
      up	mov	#x$xpkt,r3		; contect
 	mov	x$xcsr,ip.csr(r3)	; save csr
 	mov	x$xrty,ip.rty(r3)	; retry count
@@ -397,14 +512,22 @@ drrep$ <st >
 	inc	ip.trn(r3)		; make write
 	neg	r1			; logical write
 20$:	mov	r1,ip.rwc(r3)		; setup request word count
+.if ne log$c
+	beqw	ip.lb0(r3),#-1,xx$log	; reading log
+.endc
 	br	xx$loo			;
 
 30$:	cmpb	r2,#373			; check function code
 	bne	xx$der			; invalid
 	jmp	xx$siz			; do the size function
 					;
+.if ne log$c
+xx$log:	call	if$rep			; report
+	jmp	xx$don			;
+.endc
+
 xx$der:
-drrep$ <Der>
+ifasc$ <E>
 	jmp	xx$her			;
 .sbttl	i/o loop
 
@@ -416,7 +539,10 @@ drrep$ <Der>
 ;	All transfers are word aligned.
 
 xx$loo:	call	xx$agn		; setup retry point
-drrep$ <Loo>
+	bnew	x$xini,5$
+	call	xx$ini
+5$:
+ifasc$ <L>
 	call	xx$res		; restore addresses
 	mov	ip.rwc(r3),r0	; get total count
 	mov	r0,ip.twc(r3)	; running count
@@ -435,7 +561,7 @@ drrep$ <Loo>
 
 xx$rea:
 10$:
-drrep$ a
+ifasc$ a
 	mov	#ddDAT.!<ddNUL.*256.>,r0
 	call	xx$gfw		; get control code and count
 	mov	r0,r2		;
@@ -455,11 +581,11 @@ drrep$ a
 20$:	call	xx$gtw		; get data
 	call	xx$put		; put to user 
 	sobw	r2,20$		;
-drrep$ c
+ifasc$ c
 25$:
 	call	xx$chk		; get checksum
 	bnew	ip.twc(r3),10$	; more data
-;drrep$ d
+;ifasc$ d
 	br	xx$gep		; get end packet
 
 ;recv:	.byte	ddCON.
@@ -471,7 +597,7 @@ drrep$ c
 
 xx$wri:
 10$:	call	xx$gtb		; synch with continue
-	bneb	r0,#ddCON.,xx$erj ; houston ...
+	bneb	r0,#ddCON.,xx$er9 ; houston ...
 	mov	#64.,r2		; assume full sector
 	cmp	r2,ip.twc(r3)	; got that?
 	blos	20$		; yep
@@ -491,9 +617,10 @@ xx$wri:
 xx$gep:	call	xx$enp		; get end packet
 	jmp	xx$don		; all over
 
-xx$er1:	drrep$	<1>
-xx$er2:	drrep$	<2>
-xx$er3:	drrep$	<3>
+xx$er1:	ifasc$	<1> xx$erj
+xx$er2:	ifasc$	<2> xx$erj
+xx$er3:	ifasc$	<3> xx$erj
+xx$er9:	ifasc$	<9>
 xx$erj:	jmp	xx$err
 .sbttl	i/o envelope
 
@@ -546,12 +673,21 @@ xx$wai:	begin	x$xctn			; continue after interrupt
 	mov	r0,ip.r0(r3)		;
 	mov	r1,ip.r1(r3)		; save stuff
 	mov	r2,ip.r2(r3)		;
+	.if ne tim$c			;
 	drtim$	x$xtmo			; setup timer
+	.endc				;
 xx$ret:	return				;
 
 ;	Interrupt entry point
 
+.if ne fst$c
+ddint:	beqw	(pc)+,20$
+d$dfst:	.word	0
+	jsr	r5,@i$inptr
+	.word	140
+.iff
 	.drast	xx,ddpri.,xx$abt	; INTERRUPT
+.endc
 	call	xx$dsb			; disable interrupts
 tm$ast:	pshs	<r3,r2,r1,r0>		;
 	call	10$			; dispatch via x$xctn
@@ -559,7 +695,7 @@ tm$ast:	pshs	<r3,r2,r1,r0>		;
 	return				;
 10$:	call	xx$pnt			;
 	beq	xx$ret			; no queue element
-	end	x$xctn			;
+20$:	end	x$xctn			;
 
 xx$abt:	call	xx$dsb			; disable interrupts
 	clrb	0(r5)			;\clear break
@@ -570,8 +706,10 @@ xx$abt:	call	xx$dsb			; disable interrupts
 xx$agn:	mov	(sp),x$xagn		; setup retry point
 	return
 
-xx$er4:	drrep$	<4>
-xx$er5:	drrep$	<5>
+xx$er4:	ifasc$	<4> xx$erj
+xx$er5:	ifasc$	<5> xx$erj
+xx$er6:	ifasc$	<6> xx$erj
+xx$er7:	ifasc$	<7>
 xx$err:	dec	ip.rty(r3)		; final retry attempt?
 	bmi	xx$her			; all over
 	call	xx$ini			; go init
@@ -595,11 +733,12 @@ xx$don:	br	xx$fin			;
 ;	r4 ->	I/O queue element
 
 xx$her:	bis	#csher$,@iq.csw(r4)	;sic] set the error flag
+	clr	x$xini			;
 xx$fin:	.if ne odt$c			;
 	beqw	x$xodt,10$		;not in odt mode
 	bis	#ddenb$,@x$xcsr		;reenable terminal
 	.endc				;
-10$:	drrep$ <Fin>			;
+10$:	ifasc$ <X>			;
 	.drfin	xx			;finish up
 .sbttl	device utilities
 
@@ -609,12 +748,23 @@ xx$gfw:	begin	x$xgtw			; check first byte
 	call	xx$gtb			; get first
 	beqb	r0,(r3),10$		; fine
 	swab	(r3)			; is there an alternate?
-	beq	xx$err			; no alternate code
+	beq	xx$er6			; no alternate code
 	bneb	r0,(r3),xx$er4		; still no joy
 10$:	clr	(r3)			; clear checksum
 	br	20$			; get second byte
 
 xx$gtw:	begin	x$xgtw			;
+.if ne die$c
+	dec	(pc)+
+100$:	.word	1000.
+	bpl	120$
+	mov	#1000.,100$
+110$:	tstb	@#177564
+	bpl	110$
+	mov	#'@,@#177566
+	br	xx$er6
+120$:
+.endc
 	call	xx$gtb			; get two bytes
 20$:	swab	r0			;
 	call	xx$gtb			;
@@ -644,6 +794,7 @@ xx$gtb:	begin
 	br	10$			;
 20$:	clrb	r0			;
 	bisb	dd.rbu(r5),r0		;
+	ifipt$	r0
 .endc
 	end
 
@@ -659,7 +810,13 @@ xx$ptw:	begin				;
 xx$chk:	begin				; check the checksum
 	mov	(r3),r2			; get the checksum
 	call	xx$gtw			; get the checksum
+.if ne die$c
+	beqw	r0,r2,10$
+	jmp	xx$er5		; oops
+10$:
+.iff
 	bnew	r0,r2,xx$er5		; oops
+.endc
 	end				;
 
 xx$ptb:	begin
@@ -682,11 +839,14 @@ xx$ptb:	begin
 30$:	call	xx$wai			; wait for it
 	br	10$			;
 40$:	movb	r0,dd.xbu(r5)		;
+	ifopt$	r0
 	end
 
 tm$abt:
-     up	mov	#xx$err,x$xctn		; timer abort
-xx$dsb:	drtim$	#0			; cancel timeout
+     up	mov	#xx$er7,x$xctn		; timer abort
+xx$dsb:	.if ne tim$c			;
+	drtim$	#0			; cancel timeout
+	.endc				;
 	mov	x$xcsr,r5		; ugh
 .if ne dzv$c
 	bic	#dzcti$!ddenb$,(r5)	; turn off both
@@ -697,25 +857,22 @@ xx$dsb:	drtim$	#0			; cancel timeout
 	return
 
 xx$ini:	begin				; init device
-drrep$ I
-5$:	mov	#077777,r1		; 7*8
-10$:	movb	#ddbrk$,0(r5)		; set break
+ifasc$ I
+	inc	x$xini			; init in progress
+	mov	#8.,r1			; eight retries
+10$:	movb	#ddbrk$,0(r5)	;7(r5)	; set break
 ;sic]	movb	#dzbrk?,7(r5)		; set DZV mask
 	x$xdz2=.-4			; DZV patch
 	x$xdz3=.-2			; DZV patch
-20$:	clr	r0			;
-	call	xx$ptb			; put another
-	clc				;
-	rorb	r1			;	
-	bne	20$			;
-	clrb	0(r5)			; clear break
-;sic]	clrb	7(r5)			; DZV
+20$:	mov	#177777,r0		; like RT-11
+	call	xx$ptw			; send 377 twice
+	clrb	0(r5)		;7(r5)	; clear break
 	x$xdz4=.-2			; DZV patch
-drrep$ J
+ifasc$ j
 	mov	(pc)+,r0		;
 	.byte	ddini.,ddini.		; two inits
 	call	xx$ptw			; write two inits
-drrep$ K
+ifasc$ k
 25$:	tst	dd.rbu(r5)		; clear input errors
 .if ne dzv$c
 	nop				; empty DZV silo
@@ -724,13 +881,14 @@ drrep$ K
 .endc
 	call	xx$gtb			; get the response
 	beqb	r0,#ddCON.,30$		; great
-drrep$ L
-	asr	r1			; more tries left
-	bne	10$			; yep
+ifasc$ l
+	sobw	r1,10$			; try again
+ifasc$ m
 	jmp	xx$her			; declare it dead
 30$:	end
-
+.if ne tim$c			;
 $drtim					; timeout support
+.endc				;
 .sbttl	memory utilities
 
 xx$sav:	mov	iq.buf(r4),ip.buf(r3)	; save buffer address
@@ -766,6 +924,8 @@ xx$pnt:
 	mov	ip.csr(r3),r5		; r5 -> csr
 	mov	xxcqe,r4		; r4 -> queue element
 	return				; z=1 => aborted
+
+ifcod$
 .sbttl	bootstrap
 
 ;	Implements timeout
@@ -787,7 +947,8 @@ bo$onc:	mov	#dzcse$,(r5)	;2	; check for DZV
 .endc
 
 boloc$	40
-bo$jmp:	jmp	@#bo$boo-xxboot
+bo$jmp = .+2
+	jmp	@#bo$boo-xxboot
 
 boloc$	44
 b$orpk:
@@ -852,15 +1013,18 @@ bo$ini:	dec	r1			; count inits
 	movb	#1,7(r5)		; set break
 	b$obk0 = .-2
 .iff
-	mov	#1,(r5)			; set break
+;old	mov	#1,(r5)			; set break
+	bis	#1,(r5)			; set break
 .endc
 	clr	r0			;
+;new	mov	#-1,r0			;
 	call	bo$ptw			; two of them
 .if ne dzv$c
-	clrb	7(r5)			; set break
+	clrb	7(r5)			; clear break
 	b$obk1 = .-2
 .iff
-	clr	(r5)			; clear break
+;old	clr	(r5)			; clear break
+	bic	#1,(r5)			;
 .endc
 	mov	(pc)+,r0		; send two inits
 	.byte	ddINI.,ddINI.		;
@@ -927,6 +1091,7 @@ bo$ptb:	bplb	dd.xsr(r5),bo$ptb	; put byte
 	movb	r0,dd.xbu(r5)		; out damned spot
 	swab	r0			; swap for next
 	return				;
+
 bo$gtw:	call	(pc)			;
 	assume	dd.rsr eq 0		; get byte (in high byte)
 bo$gtb:	movb	#12.,20$		; timeout magic
@@ -955,31 +1120,34 @@ b$oblk:	.word	0			; blk
 
 ;	r0	unit number in low order 3 bits
 
-bo$boo:	mov	#b$rksp,sp		;setup the stack
-	bic	#^c7,r0			;isolate unit number
-	mov	r0,b$ouni		;setup the unit number
-bo$rst:	mov	#brsbn.,r0		;r0 = block
-	mov	#brswc.,r1		;r1 = word count
-	mov	#br$sec,r2		;r2 = buffer address
-	call	bo$loa			;load secondary boot
-	mov	#bo$rea-xxboot,@#b$rrea	;fill in address of read routine
-	b$onam = . + 2			;for SET
-	mov	#xxnam.,@#b$rdvn	;fill in device name
-	mov	b$ouni,@#b$rdvu		;setup unit number
-	jmp	br$sec+xxboot		;start secondary boot
+bo$boo:	mov	#b$rksp,sp		; setup the stack
+	bic	#^c7,r0			; isolate unit number
+	mov	r0,b$ouni		; setup the unit number
+bo$rst:	mov	#brsbn.,r0		; r0 = block
+	mov	#brswc.,r1		; r1 = word count
+	mov	#br$sec,r2		; r2 = buffer address
+	call	bo$loa			; load secondary boot
+	mov	#bo$rea-xxboot,@#b$rrea	; fill in address of read routine
+	b$onam = . + 2			; for SET
+	mov	#xxnam.,@#b$rdvn	; fill in device name
+	mov	b$ouni,@#b$rdvu		; setup unit number
+	jmp	br$sec+xxboot		; start secondary boot
 
-	assume	. le b$rtop+xxboot	;check space for bioerr etc
+	assume	. le b$rtop+xxboot	; check space for bioerr etc
 	.drend	xx
 .sbttl	load/fetch
 boloc$	1000
 ddload:
 
 dr$fet:
-dr$loa:
-	call	up$rel			; relocate driver
+dr$loa:	call	up$rel			; relocate driver
 	mov	(r5),r4			; driver entry point
 	sub	#dr.lqe,r4		; r4 -> driver block zero
+;bpt
+	.if ne tim$c			;
 	vecap$	#v$eclk,#tm$clk,r4	; capture clock for timeout
+	.endc				;
+;bpt
 .if ne dzv$c
 	mov	x$xcsr(r4),r3		; r3 -> csr
 	mov	#dzcse$,(r3)		; check for DZV
@@ -1004,7 +1172,9 @@ dr$rel:
 dr$unl:	mov	(r5),r4
 	sub	#dr.lqe,r4
 	call	xx$dsb(r4)		; disable (r5 destroyed)
+	.if ne tim$c			;
 	verel$	#v$eclk,#tm$clk,r4
+	.endc				;
 	return
 
 ;	lo$dzp - set port/speed code
@@ -1101,6 +1271,7 @@ in$ptb:	bpsw	#dzcse$,(r5),10$	;
 20$:	movb	r0,dd.xbu(r5)		; out damned spot
 	swab	r0			; swap for next
 	return				;
+
 	assume	dd.rsr eq 0		; get byte (in high byte)
 in$gtb:	movb	#4.,20$	; was 12.	; timeout magic
 10$:	dec	#0			; low order

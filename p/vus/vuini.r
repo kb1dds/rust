@@ -29,7 +29,7 @@ include rid:rtboo
 include rid:rtcla
 include rid:rtcli
 include rid:rtcst
-include rid:rtdir
+include rid:rtrea
 include	vub:vumod
 
 ;	/x=n	Specifies volume size in blocks
@@ -229,10 +229,10 @@ code	in_chk - compute checksum
 	chk += *blk++ while cnt--
 	*blk = chk
   end
-;???;	VUS:VUINI use driver spfun size if available (not Windows)
-code	in_tot - get total segment count
+code	in_tot - get total segment count
 
 ;	RT-11 utility guides specify most of these figures
+;	Cross-checked with PUTR.ASM 
 
   type	inTdev
   is	Vcod : int			; RT-11 device code
@@ -242,13 +242,13 @@ code	in_tot - get total segment count
   end
 
   init	inAdev : [] inTdev 
-  is	034,	1,	0,	0	; DD:	
+  is   ;cod	cnt	alt	thr	; dev
+	034,	1,	0,	0	; DD:	
 	005,	16,	31,	10240	; DL: (single, double)
 	023,	31,	0,	0	; DM:
 	021,	31,	0,	0	; DP:
 	016,	4,	0,	0	; DS:
 	001,	4,	0,	0	; DT:
-	050,	1,	31,	1024	; DU: (floppy, disk)
 	053,	16,	31,	9792	; DW: (RD50, RD51)	
 	022,	1,	0,	0	; DX:
 	006,	1,	4,	494	; DY:
@@ -256,34 +256,39 @@ code	in_tot - get total segment count
 	012,	4,	0,	0	; RF:
 	000,	16,	0,	0	; RK:
 
+;	Variable size devices
+;
 ;		?,	?,	????	; HD:
 ;	046,	?,	?,	????	; LD:
 ;	047,	?,	?,	????	; VM:
+;	050,	1,	31,	1024	; DU: (floppy, disk)
 	-1,	0,	0	
   end
 
   func	in_tot
 	cla : * rtTcla
   is	dev : * inTdev~ = inAdev
-	siz : WORD~ = cla->Vsiz
+	siz : WORD~ = cla->Vsiz		; device size from rt_cla
 	cnt : int~ 
 
 	reply cmVseg if cmVseg		; count is explicit
 					;
-	while dev->Vcod ne -1		; find device, if any
-	&& dev->Vcod ne (cla->Vdsw&255)	;
-	   ++dev			; next 
-	end				;
-					;
-	if dev->Vcod ne -1		; found something
-	   cnt = dev->Vcnt		; assume normal
-	   if dev->Vthr gt siz		; above threshold?
-	   .. cnt =  dev->Valt		; yep - use alternate
-	else
-	   cnt = 31			; start at the top
-	   cnt = 16 if siz le 12288	; and whittle down
-	   cnt = 4 if siz le 2048	;
-	.. cnt = 1 if siz le 512	;
+	if !cla->Vflg & fcCON_		; not a container file
+	   while dev->Vcod ne -1	; find device, if any
+	      if dev->Vcod eq (cla->Vdsw&255) ; found the device
+	         cnt = dev->Vcnt	; assume normal
+	         if dev->Vthr gt siz	; above threshold?
+	         .. cnt = dev->Valt	; yep - use alternate
+	      .. reply cnt		; done
+	      ++dev			; next 
+	.. end				;
+
+;	Use RT-11 algorithm to determine directory segment count
+
+	cnt = 31			; start at the top
+	cnt = 16 if siz le 12288	; and whittle down
+	cnt = 4 if siz le 2048		;
+	cnt = 1 if siz le 512		;
 	reply cnt
   end
 code	in_res - restore directory

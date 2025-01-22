@@ -1,11 +1,8 @@
-;***;	VUCOP.R - Add boot save/restore
-;
+cio$c := 0	; use C I/O
 ;???	sysgen compatibility
 ;???	driver present
 ;???	BOOT.SYS present
 ;???	SWAP.SYS present (and correct size)
-;
-;.sys
 file	vucop - copy boot to volume
 include	rid:rider
 include	rid:fidef
@@ -15,20 +12,19 @@ include rid:rtboo
 include rid:rtcst
 include rid:rtdir
 include rid:rtdrv
-;nclude rid:rxdef
+include rid:rtrea
 include	vub:vumod
 
 code	cm_cop - copy bootstrap to volume
 
 ;	COPY/BOOT[:dd] sys:system dev:
 ;
-;	VUP dev:*=sys:system.*/U:drv
+;	VUP dev:*=sys:system.*/U:drv[/L][/M]
 ;
 ;	DEV:	DUP defaults DEV: to the system device.
 ;		VUP issues a message "no output device specified".
 ;
 ;		RT-11 requires that DEV: be an RT11A volume.
-; ???		Support NF: volume if explicit driver name specified.
 ;		So do we at present, but that might change.
 ;
 ;	SYS: 	RT-11 defaults to DK:
@@ -52,13 +48,11 @@ code	cm_cop - copy bootstrap to volume
 ;		same SYSGEN options. We don't for BOOT.SYS.
 ;		(BOOT.SYS has no SYSGEN options).
 ;
+;	/WAIT	RT-11 prompts for "Input device" only.
+;
 ;	o  Copy the primary bootstrap
 ;	o  Copy the secondary bootstrap
 ; ???	o  Restore the original bootstrap if the secondary fails
-;
-; /WAIT	
-;	RT-11 prompts for "Input device" only.
-; ???	Check SWAP.SYS
 
 code	cm_cop - copy bootstrap to device
 
@@ -77,19 +71,16 @@ code	cm_cop - copy bootstrap to device
 	ipt := cmAspc[3]
 	opt := cmAspc[0]
 
-;	roo := (<*word>mon.Pbuf)
-
   proc	cm_cop
   is
 	if !(*ipt.Pnam && *opt.Pnam)		; check files specified
 	.. exit vu_inv ()			; invalid command
 
 ;	Device (DL1:)
-;	Check NF: volume and explicit driver
 
 	exit if !vu_opn (&dev, opt.Pnam, "rbp+"); "DL1:"
-	vu_cln (&dev, &boo)
-	vu_cln (&dev, &roo)
+	vu_cln (&dev, &boo)			; clone boot object
+	vu_cln (&dev, &roo)			;
 
 ;	Monitor (DL1:RUST.SYS)
 
@@ -107,17 +98,23 @@ code	cm_cop - copy bootstrap to device
 	rx_unp (cst.Vdev, dev.Atmp)		; unpack device name
 	st_cop (dev.Atmp, drv.Atmp)		; assume driver is the same
 	drv.Atmp[2] = 0				; zap unit number
+
+;	copy/boot=drv ...
+
 	rx_unp (cmVdrv, drv.Atmp) if cmVdrv	; got explicit driver
-						;
-						; select the RT-11 driver
+
+;	Select and read the driver
+
 	if !rt_drv (dev.Anam, drv.Atmp, suf[0], &dri)
 	.. exit im_rep ("E-Driver not found [%s]", dri.Aspc)
+						;
 	drv.Pfil = dri.Pfil			; grab the file
 	vu_alc (&drv)				; allocate control block
 	vu_cln (&drv, &bas)			; clone it
 	exit if !vu_get (&bas)			; read driver base
-						;
-						; read the driver bootstrap
+
+;	Read the driver bootstrap
+
 	if !bt_drv (drv.Pfil, boo.Pbuf, &hdr->Vrea, "")
 	.. exit im_rep ("E-Error reading driver boot [%s]", dri.Aspc)
 
@@ -127,16 +124,37 @@ code	cm_cop - copy bootstrap to device
 	rx_scn (mon.Anam, img)			; convert monitor name
 	hdr->Amon[0] = img[1]			; store it
 	hdr->Amon[1] = img[2]			; (see above for hdr->Vrea)
+
 ;	SYSGEN compatibility
 
 ;	if *roo->Pbuf ne 0167			; not BOOT.SYS
 ;	   if hdr->Vsyg ne xxx->Vsyg
 ;	   if !fi_exs ("SWAP.SYS")
 
+	if (cmVopt & cmLOG_) || (cmVopt & cmQUE_) ; /LOG
+	   PUT("Monitor: %s, ", mon.Anam) 	; monitor
+	   PUT("Boot driver: %s, " , dri.Aspc) 	; bootstrap driver
+	   PUT("System driver: %s\n" , dri.Adrv); runtime driver with suffix
+	end					;
+						;
+	if cmVopt & cmQUE_			; /QUERY
+	   rt_qry("Copy/Boot ", mon.Anam, <>)	; are you sure?
+	.. pass fail				;
+
 ;	Write boot block and secondary boot
 
+If cio$c
+	if !fi_see (dev.Pfil, 0L)
+	|| !fi_wri (dev.Pfil, boo.Pbuf, 512)
+	|| !fi_see (dev.Pfil, 1024L)
+	|| !fi_wri (dev.Pfil, roo.Pbuf, 2048)
+	.. exit im_rep ("E-Error writing bootstrap [%s]", dev.Anam)
+Else
 	if !rt_wri (dev.Pfil, 0, boo.Pbuf, 512/2, rtWAI)
 	|| !rt_wri (dev.Pfil, 2, roo.Pbuf, 2048/2, rtWAI)
 	.. exit im_rep ("E-Error writing bootstrap [%s]", dev.Anam)
+End
+	fi_clo (dev.Pfil, "")	
+       ;fi_prg (dri.Pfil, "")	; channel was cloned
   end
 
